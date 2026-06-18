@@ -25,10 +25,11 @@
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
 
-          # `pkg-config` locates `openssl`, needed by reqwest's native-tls (pulled
-          # in by the default `steam-api` feature).
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.openssl ];
+          # TLS is provided by rustls (reqwest is built with `default-features = false`
+          # and the `rustls-tls` feature), so no OpenSSL/pkg-config is required — only a
+          # C compiler for linking, which buildRustPackage's stdenv supplies.
+          nativeBuildInputs = [ ];
+          buildInputs = [ ];
 
           meta = with pkgs.lib; {
             description = "A monitor for nearby planes";
@@ -48,18 +49,21 @@
         apps.default = flake-utils.lib.mkApp { drv = planespotter; };
 
         devShells.default = pkgs.mkShell {
-          # Pull in the package's build inputs (openssl, pkg-config, …) so the
-          # dev shell can build it, plus the interactive toolchain.
-          inputsFrom = [ planespotter ];
+          # Self-contained interactive toolchain. TLS uses rustls, so the only native
+          # requirement beyond the Rust toolchain is a C compiler for linking (gcc).
+          # Kept independent of the `planespotter` derivation so `nix develop` works
+          # before Cargo.lock is committed.
           packages = [
             pkgs.rustc
             pkgs.cargo
             pkgs.clippy
             pkgs.rustfmt
+            pkgs.rust-analyzer
             pkgs.gcc
             pkgs.git
           ];
           env.CC = "cc";
+          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
         };
 
         formatter = pkgs.nixfmt;

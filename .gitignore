@@ -1,1 +1,8 @@
 /target
+
+# Secrets (API keys etc.) — never commit
+.env
+
+# Local runtime config and scratch region data (use planespotter.toml.example as a template)
+planespotter.toml
+outside.geojson

@@ -1,0 +1,33 @@
+# Copy to planespotter.toml and edit. The real planespotter.toml is gitignored.
+poll_interval_secs = 5
+
+[source]
+kind = "network"                          # "network" today; "rtlsdr" later
+base_url = "https://api.airplanes.live/v2"
+
+[enrich]
+adsbdb = true                             # origin/destination, free, no key
+# AeroDataBox key (delay info) is supplied via AERODATABOX_API_KEY in .env (gitignored).
+# aerodatabox_host = "aerodatabox.p.rapidapi.com"
+
+# A region may specify exactly one of: circle, polygon, bbox, geojson.
+[[regions]]
+name = "JFK approach"
+[regions.circle]
+lat = 40.6413                             # John F. Kennedy Intl
+lon = -73.7781
+radius_nm = 6
+
+# Other shapes:
+#
+# [[regions]]
+# name = "inline polygon"                  # [[lat, lon], ...]
+# polygon = [[40.70, -73.85], [40.70, -73.70], [40.60, -73.70], [40.60, -73.85]]
+#
+# [[regions]]
+# name = "bounding box"
+# bbox = { min_lat = 40.60, min_lon = -73.85, max_lat = 40.70, max_lon = -73.70 }
+#
+# [[regions]]
+# name = "drawn in geojson.io"             # inline GeoJSON content only (no file paths)
+# geojson = '''{ "type": "Polygon", "coordinates": [[[-73.85,40.70],[-73.70,40.70],[-73.70,40.60],[-73.85,40.60],[-73.85,40.70]]] }'''
