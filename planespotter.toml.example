@@ -11,8 +11,13 @@ adsbdb = true                             # origin/destination, free, no key
 # aerodatabox_host = "aerodatabox.p.rapidapi.com"
 
 # A region may specify exactly one of: circle, polygon, bbox, geojson.
+# Optional min_alt_ft / max_alt_ft restrict by barometric altitude — e.g. cap at 4000 ft to
+# watch arrivals/departures and ignore high overflights. Aircraft not reporting an altitude are
+# not excluded.
 [[regions]]
 name = "JFK approach"
+max_alt_ft = 4000
+# min_alt_ft = 0
 [regions.circle]
 lat = 40.6413                             # John F. Kennedy Intl
 lon = -73.7781

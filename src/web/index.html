@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>planespotter</title>
+<style>
+  :root {
+    --bg: #0b0c0e;
+    --panel: #101216;
+    --tile-top: #1d2025;
+    --tile-bot: #15171b;
+    --ink: #ece9e0;          /* warm off-white, like Solari flaps */
+    --dim: #565b63;
+    --amber: #d7a13b;        /* used sparingly, for delays */
+    --tile-w: clamp(0.95rem, 2.6vw, 1.5rem);
+    --tile-h: calc(var(--tile-w) * 1.45);
+    --tile-fs: calc(var(--tile-w) * 0.95);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: radial-gradient(120% 90% at 50% 0%, #14161a 0%, var(--bg) 60%);
+    color: var(--ink);
+    font-family: "SFMono-Regular", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  }
+  .wrap {
+    max-width: min(56rem, 96vw);
+    margin: 0 auto;
+    padding: clamp(1.5rem, 5vh, 4rem) 1rem 3rem;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 1px solid #23262c;
+    padding-bottom: 0.6rem;
+    margin-bottom: 1.4rem;
+  }
+  header .title {
+    letter-spacing: 0.45em;
+    font-size: 0.85rem;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+  header .clock {
+    letter-spacing: 0.2em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    font-size: 0.95rem;
+  }
+
+  .board { perspective: 800px; }
+
+  .head-row, .row {
+    display: grid;
+    grid-template-columns: 7fr 4fr 4fr 4fr 6fr 8fr;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .head-row {
+    margin-bottom: 0.7rem;
+    padding: 0 0.1rem;
+  }
+  .head-row .col {
+    color: var(--dim);
+    font-size: 0.62rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+  }
+  .row {
+    margin-bottom: 0.35rem;
+    animation: rowin 0.4s ease both;
+  }
+  @keyframes rowin { from { opacity: 0; } to { opacity: 1; } }
+
+  .cell { display: flex; gap: 2px; }
+
+  .tile {
+    position: relative;
+    width: var(--tile-w);
+    height: var(--tile-h);
+    line-height: var(--tile-h);
+    font-size: var(--tile-fs);
+    text-align: center;
+    color: var(--ink);
+    background: linear-gradient(180deg, var(--tile-top) 0 49.5%, var(--tile-bot) 50.5% 100%);
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px #000, 0 1px 2px rgba(0,0,0,0.7);
+    transform-style: preserve-3d;
+    backface-visibility: hidden;
+  }
+  /* the horizontal seam down the middle of each flap */
+  .tile::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 1px;
+    background: rgba(0,0,0,0.65);
+    transform: translateY(-0.5px);
+  }
+  .tile.flap { animation: flap 0.17s ease-in; transform-origin: center center; }
+  @keyframes flap {
+    0%   { transform: rotateX(0deg); }
+    49%  { transform: rotateX(88deg); filter: brightness(0.6); }
+    51%  { transform: rotateX(-88deg); filter: brightness(0.6); }
+    100% { transform: rotateX(0deg); }
+  }
+
+  .cell.status .tile.late { color: var(--amber); }
+
+  .empty {
+    text-align: center;
+    color: var(--dim);
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    padding: 3.5rem 0;
+  }
+  footer {
+    margin-top: 2rem;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.62rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="title">planespotter</div>
+      <div class="clock" id="clock">--:--:--</div>
+    </header>
+
+    <div class="board">
+      <div class="head-row" id="headRow"></div>
+      <div id="rows"></div>
+      <div class="empty" id="empty" hidden>— skies clear —</div>
+    </div>
+
+    <footer><span id="count">0</span> aircraft nearby</footer>
+  </div>
+
+<script>
+  // Column layout: key, header label, and fixed character width (split-flap cells).
+  const COLS = [
+    { key: "flight", label: "Flight", w: 7 },
+    { key: "ac",     label: "A/C",    w: 4 },
+    { key: "from",   label: "From",   w: 4 },
+    { key: "to",     label: "To",     w: 4 },
+    { key: "alt",    label: "Alt",    w: 6 },
+    { key: "status", label: "Status", w: 8 },
+  ];
+
+  const rowsEl = document.getElementById("rows");
+  const emptyEl = document.getElementById("empty");
+  const countEl = document.getElementById("count");
+
+  // Build the header labels.
+  const headRow = document.getElementById("headRow");
+  for (const c of COLS) {
+    const d = document.createElement("div");
+    d.className = "col";
+    d.textContent = c.label;
+    headRow.appendChild(d);
+  }
+
+  // id -> { el, cells: { key -> { el, tiles: [span], late } } }
+  const live = new Map();
+
+  function pad(text, w) {
+    text = (text || "").toUpperCase();
+    if (text.length > w) text = text.slice(0, w);
+    return text.padEnd(w, " ");
+  }
+
+  function makeRow(id) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const cells = {};
+    for (const c of COLS) {
+      const cell = document.createElement("div");
+      cell.className = "cell " + c.key;
+      const tiles = [];
+      for (let i = 0; i < c.w; i++) {
+        const t = document.createElement("span");
+        t.className = "tile";
+        t.textContent = " ";
+        cell.appendChild(t);
+        tiles.push(t);
+      }
+      row.appendChild(cell);
+      cells[c.key] = { el: cell, tiles };
+    }
+    const entry = { el: row, cells };
+    live.set(id, entry);
+    return entry;
+  }
+
+  // Set a cell's text, flipping only the character tiles that actually change.
+  function setCell(cellObj, text, w, late) {
+    text = pad(text, w);
+    for (let i = 0; i < w; i++) {
+      const tile = cellObj.tiles[i];
+      const ch = text[i] === " " ? " " : text[i];
+      if (tile.textContent !== ch) {
+        tile.textContent = ch;
+        tile.classList.remove("flap");
+        void tile.offsetWidth; // restart the animation
+        tile.classList.add("flap");
+      }
+      tile.classList.toggle("late", !!late && ch !== " ");
+    }
+  }
+
+  function update(rows) {
+    const seen = new Set();
+    rows.forEach((r) => {
+      seen.add(r.id);
+      const entry = live.get(r.id) || makeRow(r.id);
+      const late = typeof r.status === "string" && r.status.startsWith("+");
+      for (const c of COLS) {
+        setCell(entry.cells[c.key], r[c.key], c.w, c.key === "status" && late);
+      }
+      rowsEl.appendChild(entry.el); // re-append in sorted order
+    });
+    // Remove rows that have left.
+    for (const [id, entry] of live) {
+      if (!seen.has(id)) {
+        entry.el.remove();
+        live.delete(id);
+      }
+    }
+    countEl.textContent = rows.length;
+    emptyEl.hidden = rows.length !== 0;
+  }
+
+  // Live clock.
+  function tick() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    document.getElementById("clock").textContent =
+      p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // Stream board updates over SSE (auto-reconnects on drop).
+  const es = new EventSource("/events");
+  es.onmessage = (e) => {
+    try { update(JSON.parse(e.data)); } catch (_) {}
+  };
+</script>
+</body>
+</html>

@@ -138,6 +138,45 @@ impl Region {
     }
 }
 
+/// A named region plus an optional altitude band, as the engine actually watches it.
+///
+/// The altitude band keeps the watch focused on (e.g.) aircraft on approach and excludes
+/// high overflights. An aircraft is admitted when it's inside the geometry AND — if it reports
+/// an altitude — that altitude is within `[min_alt_ft, max_alt_ft]`. Aircraft with no reported
+/// altitude are not excluded on altitude grounds (we can't confirm a violation).
+#[derive(Debug, Clone)]
+pub struct WatchedRegion {
+    pub name: String,
+    pub region: Region,
+    pub min_alt_ft: Option<f64>,
+    pub max_alt_ft: Option<f64>,
+}
+
+impl WatchedRegion {
+    /// Whether this region admits an aircraft at the given position and (optional) altitude.
+    pub fn admits(&self, lat: f64, lon: f64, altitude_ft: Option<f64>) -> bool {
+        if !self.region.contains(lat, lon) {
+            return false;
+        }
+        if let (Some(min), Some(alt)) = (self.min_alt_ft, altitude_ft) {
+            if alt < min {
+                return false;
+            }
+        }
+        if let (Some(max), Some(alt)) = (self.max_alt_ft, altitude_ft) {
+            if alt > max {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The query circle enclosing this region's geometry.
+    pub fn bounding_circle(&self) -> (f64, f64, f64) {
+        self.region.bounding_circle()
+    }
+}
+
 /// Great-circle distance in nautical miles between two `(lat, lon)` points.
 fn haversine_nm(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let (p1, p2) = (lat1.to_radians(), lat2.to_radians());

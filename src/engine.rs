@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::enrich::{AdsbdbRoute, AeroDataBoxStatus, CachingEnricher, CompositeEnricher, Enricher};
-use crate::geo::Region;
+use crate::geo::WatchedRegion;
 use crate::model::{Aircraft, EventKind, SpottingEvent};
 use crate::source::{NetworkSource, PositionSource};
 use anyhow::{Result, bail};
@@ -22,7 +22,7 @@ const EVENT_CHANNEL_CAP: usize = 256;
 pub struct Engine {
     source: Arc<dyn PositionSource>,
     enricher: Arc<dyn Enricher>,
-    regions: Vec<(String, Region)>,
+    regions: Vec<WatchedRegion>,
     poll_interval: Duration,
     /// Per-region set of aircraft currently inside, with their last-seen state.
     present: HashMap<usize, HashMap<String, Aircraft>>,
@@ -75,7 +75,7 @@ impl Engine {
     pub async fn poll_once(&mut self) -> Result<()> {
         for idx in 0..self.regions.len() {
             if let Err(e) = self.poll_region(idx).await {
-                let name = &self.regions[idx].0;
+                let name = &self.regions[idx].name;
                 tracing::warn!(region = %name, error = %e, "region poll failed");
             }
         }
@@ -92,17 +92,16 @@ impl Engine {
     }
 
     async fn poll_region(&mut self, idx: usize) -> Result<()> {
-        let (name, region) = &self.regions[idx];
-        let name = name.clone();
-        let (lat, lon, radius) = region.bounding_circle();
+        let name = self.regions[idx].name.clone();
+        let (lat, lon, radius) = self.regions[idx].bounding_circle();
 
         let observed = self.source.poll(lat, lon, radius).await?;
-        let region = &self.regions[idx].1;
+        let region = &self.regions[idx];
 
-        // Aircraft genuinely inside the precise region, keyed by hex.
+        // Aircraft genuinely inside the precise region and altitude band, keyed by hex.
         let mut current: HashMap<String, Aircraft> = HashMap::new();
         for ac in observed {
-            if region.contains(ac.lat, ac.lon) {
+            if region.admits(ac.lat, ac.lon, ac.altitude_ft) {
                 current.insert(ac.hex.clone(), ac);
             }
         }

@@ -18,7 +18,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 dotenvy = "0.15"
+axum = "0.8"
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [[bin]]
 name = "planespotter"
 path = "src/bin/main.rs"
+
+[[bin]]
+name = "planespotter-web"
+path = "src/bin/web.rs"

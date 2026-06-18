@@ -34,13 +34,8 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let mut config = Config::load(&args.config)?;
-
     // The AeroDataBox key is a secret: prefer the env var (from .env) over the config file.
-    if let Ok(key) = std::env::var("AERODATABOX_API_KEY") {
-        if !key.trim().is_empty() {
-            config.enrich.aerodatabox_key = Some(key);
-        }
-    }
+    config.apply_env_secrets();
 
     let mut engine = Engine::from_config(&config)?;
     let mut rx = engine.subscribe();

@@ -1,6 +1,6 @@
 //! TOML configuration: poll interval, position source, enrichers, and watched regions.
 
-use crate::geo::Region;
+use crate::geo::{Region, WatchedRegion};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::Path;
@@ -66,7 +66,8 @@ fn default_aerodatabox_host() -> String {
     "aerodatabox.p.rapidapi.com".to_string()
 }
 
-/// One `[[regions]]` entry: a name plus exactly one shape specification.
+/// One `[[regions]]` entry: a name plus exactly one shape specification, plus optional
+/// altitude limits.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RegionConfig {
     pub name: String,
@@ -76,6 +77,10 @@ pub struct RegionConfig {
     pub bbox: Option<BBoxConfig>,
     /// Inline GeoJSON `Polygon`/`MultiPolygon` geometry (content only, no file paths).
     pub geojson: Option<String>,
+    /// Only admit aircraft at or above this barometric altitude (feet).
+    pub min_alt_ft: Option<f64>,
+    /// Only admit aircraft at or below this barometric altitude (feet) — excludes high overflights.
+    pub max_alt_ft: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -94,9 +99,10 @@ pub struct BBoxConfig {
 }
 
 impl RegionConfig {
-    /// Expand this config entry into one or more named regions (GeoJSON `MultiPolygon` yields
-    /// several). Errors if zero or more than one shape is specified.
-    pub fn into_regions(self) -> Result<Vec<(String, Region)>> {
+    /// Expand this config entry into one or more watched regions (GeoJSON `MultiPolygon` yields
+    /// several). The altitude band applies to every region produced. Errors if zero or more than
+    /// one shape is specified.
+    pub fn into_regions(self) -> Result<Vec<WatchedRegion>> {
         let specified = self.circle.is_some() as u8
             + self.polygon.is_some() as u8
             + self.bbox.is_some() as u8
@@ -108,43 +114,41 @@ impl RegionConfig {
                 specified
             );
         }
+        let (name, min_alt_ft, max_alt_ft) = (self.name.clone(), self.min_alt_ft, self.max_alt_ft);
+        let wrap = |region: Region| WatchedRegion {
+            name: name.clone(),
+            region,
+            min_alt_ft,
+            max_alt_ft,
+        };
 
         if let Some(c) = self.circle {
-            return Ok(vec![(
-                self.name,
-                Region::Circle {
-                    lat: c.lat,
-                    lon: c.lon,
-                    radius_nm: c.radius_nm,
-                },
-            )]);
+            return Ok(vec![wrap(Region::Circle {
+                lat: c.lat,
+                lon: c.lon,
+                radius_nm: c.radius_nm,
+            })]);
         }
         if let Some(p) = self.polygon {
             let exterior = p.into_iter().map(|[lat, lon]| (lat, lon)).collect();
-            return Ok(vec![(
-                self.name,
-                Region::Polygon {
-                    exterior,
-                    holes: vec![],
-                },
-            )]);
+            return Ok(vec![wrap(Region::Polygon {
+                exterior,
+                holes: vec![],
+            })]);
         }
         if let Some(b) = self.bbox {
-            return Ok(vec![(
-                self.name,
-                Region::BBox {
-                    min_lat: b.min_lat,
-                    min_lon: b.min_lon,
-                    max_lat: b.max_lat,
-                    max_lon: b.max_lon,
-                },
-            )]);
+            return Ok(vec![wrap(Region::BBox {
+                min_lat: b.min_lat,
+                min_lon: b.min_lon,
+                max_lat: b.max_lat,
+                max_lon: b.max_lon,
+            })]);
         }
         // geojson
         let content = self.geojson.unwrap();
         let regions = Region::from_geojson(&content)
             .with_context(|| format!("parsing geojson for region {:?}", self.name))?;
-        Ok(regions.into_iter().map(|r| (self.name.clone(), r)).collect())
+        Ok(regions.into_iter().map(wrap).collect())
     }
 }
 
@@ -158,8 +162,8 @@ impl Config {
         Ok(config)
     }
 
-    /// Flatten all region configs into resolved `(name, Region)` pairs.
-    pub fn resolve_regions(&self) -> Result<Vec<(String, Region)>> {
+    /// Flatten all region configs into resolved watched regions.
+    pub fn resolve_regions(&self) -> Result<Vec<WatchedRegion>> {
         let mut out = Vec::new();
         for rc in &self.regions {
             out.extend(rc.clone().into_regions()?);
@@ -168,6 +172,15 @@ impl Config {
             bail!("no regions configured");
         }
         Ok(out)
+    }
+
+    /// Override secrets from the environment (e.g. the AeroDataBox key from a gitignored `.env`).
+    pub fn apply_env_secrets(&mut self) {
+        if let Ok(key) = std::env::var("AERODATABOX_API_KEY") {
+            if !key.trim().is_empty() {
+                self.enrich.aerodatabox_key = Some(key);
+            }
+        }
     }
 }
 
@@ -201,7 +214,28 @@ radius_nm = 6
         assert_eq!(cfg.enrich.aerodatabox_key.as_deref(), Some("abc"));
         let regions = cfg.resolve_regions().unwrap();
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].0, "circle region");
+        assert_eq!(regions[0].name, "circle region");
+    }
+
+    #[test]
+    fn parses_altitude_limits() {
+        let toml_src = r#"
+[[regions]]
+name = "approach"
+max_alt_ft = 4000
+[regions.circle]
+lat = 40.64
+lon = -73.78
+radius_nm = 6
+"#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        let regions = cfg.resolve_regions().unwrap();
+        assert_eq!(regions[0].max_alt_ft, Some(4000.0));
+        // A high overflight is excluded; a low approach inside the circle is admitted.
+        assert!(!regions[0].admits(40.64, -73.78, Some(35000.0)));
+        assert!(regions[0].admits(40.64, -73.78, Some(2500.0)));
+        // Unknown altitude is not excluded on altitude grounds.
+        assert!(regions[0].admits(40.64, -73.78, None));
     }
 
     #[test]
@@ -216,6 +250,8 @@ radius_nm = 6
             polygon: Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]),
             bbox: None,
             geojson: None,
+            min_alt_ft: None,
+            max_alt_ft: None,
         };
         assert!(rc.into_regions().is_err());
     }
@@ -231,9 +267,11 @@ radius_nm = 6
                 r#"{ "type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]] }"#
                     .into(),
             ),
+            min_alt_ft: None,
+            max_alt_ft: None,
         };
         let regions = rc.into_regions().unwrap();
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].0, "gj");
+        assert_eq!(regions[0].name, "gj");
     }
 }
