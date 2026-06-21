@@ -1,6 +1,6 @@
 # Planespotter
 
-![banner](banner.png)
+![banner](./docs/banner.png)
 
 A little application that displays nearby flights.
 Do you live near an airport and ever wonder whether the plane nearby is full of people late for something? See for yourself.
