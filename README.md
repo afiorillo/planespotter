@@ -22,3 +22,10 @@ The free tier is sufficient for personal use.
 
 This is a little vibe-coded project through and through.
 It will likely get minimal maintenance, sorry.
+
+## License
+
+Licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE).
+This is a strong copyleft license: any modified version you distribute — or run
+as a network service that users interact with — must be made available under the
+same terms, including its complete corresponding source code.
